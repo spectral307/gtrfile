@@ -92,7 +92,7 @@ class GtrFile:
             raise Exception("Size is greater than remainder size")
 
         s = np.fromfile(self.__file, dtype=self.dtype, count=size)
-        t = self.__calc_time_vector_in_seconds(start, size)
+        t = self.__get_time_vector_in_seconds(start, size)
 
         return (t, s)
 
@@ -182,6 +182,6 @@ class GtrFile:
         return ((self.__bin_section_end - self.__file.tell())
                 // self.__inputs_number // self.__size_of_float)
 
-    def __calc_time_vector_in_seconds(self, start, size):
+    def __get_time_vector_in_seconds(self, start, size):
         sampling_interval = 1 / self.header["rate"]
         return sampling_interval * np.arange(start, start+size)
