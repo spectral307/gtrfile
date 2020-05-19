@@ -4,7 +4,6 @@ import xml.etree.ElementTree as ET
 
 
 class GtrFile:
-
     #############################################
     # Member Variables #
     #############################################
@@ -26,6 +25,7 @@ class GtrFile:
     __record_duration = None
     __samples_number_per_input = None
     __size_of_float = 4
+    __str_repr = None
 
     #############################################
     # Magic Methods #
@@ -49,34 +49,36 @@ class GtrFile:
         self.__infer_samples_dtype()
 
     def __str__(self):
-        ind = "  "
-        inputs_str = "["
-        for i, inp in enumerate(self.__header["inputs"]):
-            inputs_str += f"{',' if i != 0 else ''}\n{ind}{ind}{ind}{{"
-            inputs_str += f"\n{ind}{ind}{ind}{ind}n: {inp['n']}"
-            inputs_str += f"\n{ind}{ind}{ind}{ind}name: {inp['name']},"
-            inputs_str += f"\n{ind}{ind}{ind}{ind}iepe: {inp['iepe']},"
-            inputs_str += f"\n{ind}{ind}{ind}{ind}coupling: {inp['coupling']},"
-            inputs_str += f"\n{ind}{ind}{ind}{ind}sensitivity: {inp['sensitivity']},"
-            inputs_str += f"\n{ind}{ind}{ind}{ind}unit: {inp['unit']},"
-            inputs_str += f"\n{ind}{ind}{ind}{ind}offset: {inp['offset']},"
-            inputs_str += f"\n{ind}{ind}{ind}}}"
-        inputs_str += f"\n{ind}{ind}]"
-        return ("<GtrFile instance:"
-                + f"\n{ind}samples_number_per_input: {self.__samples_number_per_input},"
-                + f"\n{ind}bin_section_start: {self.__bin_section_start},"
-                + f"\n{ind}bin_section_end: {self.__bin_section_end},"
-                + f"\n{ind}bin_section_size: {self.__bin_section_size},"
-                + f"\n{ind}record_duration: {self.__record_duration},"
-                + f"\n{ind}inputs_number: {self.__inputs_number},"
-                + f"\n{ind}dtype: {self.__samples_dtype},"
-                + f"\n{ind}header: {{"
-                + f"\n{ind}{ind}encoding: {self.__header['encoding']},"
-                + f"\n{ind}{ind}device: {self.__header['device']},"
-                + f"\n{ind}{ind}rate: {self.__header['rate']},"
-                + f"\n{ind}{ind}time: {self.__header['time']},"
-                + f"\n{ind}{ind}inputs: {inputs_str}"
-                + "\n>")
+        if self.__str_repr is None:
+            ind = "  "
+            inputs_str = "["
+            for i, inp in enumerate(self.__header["inputs"]):
+                inputs_str += f"{',' if i != 0 else ''}\n{ind}{ind}{ind}{{"
+                inputs_str += f"\n{ind}{ind}{ind}{ind}n: {inp['n']}"
+                inputs_str += f"\n{ind}{ind}{ind}{ind}name: {inp['name']},"
+                inputs_str += f"\n{ind}{ind}{ind}{ind}iepe: {inp['iepe']},"
+                inputs_str += f"\n{ind}{ind}{ind}{ind}coupling: {inp['coupling']},"
+                inputs_str += f"\n{ind}{ind}{ind}{ind}sensitivity: {inp['sensitivity']},"
+                inputs_str += f"\n{ind}{ind}{ind}{ind}unit: {inp['unit']},"
+                inputs_str += f"\n{ind}{ind}{ind}{ind}offset: {inp['offset']},"
+                inputs_str += f"\n{ind}{ind}{ind}}}"
+            inputs_str += f"\n{ind}{ind}]"
+            self.__str_repr = ("<GtrFile instance:"
+                               + f"\n{ind}samples number per input: {self.__samples_number_per_input},"
+                               + f"\n{ind}binary section start: {self.__bin_section_start},"
+                               + f"\n{ind}binary section end: {self.__bin_section_end},"
+                               + f"\n{ind}binary section size: {self.__bin_section_size},"
+                               + f"\n{ind}record duration: {self.__record_duration},"
+                               + f"\n{ind}inputs number: {self.__inputs_number},"
+                               + f"\n{ind}samples dtype: {self.__samples_dtype},"
+                               + f"\n{ind}header: {{"
+                               + f"\n{ind}{ind}encoding: {self.__header['encoding']},"
+                               + f"\n{ind}{ind}device: {self.__header['device']},"
+                               + f"\n{ind}{ind}rate: {self.__header['rate']},"
+                               + f"\n{ind}{ind}time: {self.__header['time']},"
+                               + f"\n{ind}{ind}inputs: {inputs_str}"
+                               + "\n>")
+        return self.__str_repr
 
     def __del__(self):
         if not self.closed:
@@ -85,16 +87,22 @@ class GtrFile:
     #############################################
     # Public Methods #
     #############################################
-    def get_samples(self, start: int, size: int):
+    def get_samples(self, start: int, size: int, until_eof=False, include_time_vector=True):
         self.__seek_sample(start)
 
-        if size > self.__get_remainder_size():
-            raise Exception("Size is greater than remainder size")
+        if until_eof:
+            size = self.__get_remainder_size()
+        else:
+            if size > self.__get_remainder_size():
+                raise ValueError("size is greater than the remainder size")
 
-        s = np.fromfile(self.__file, dtype=self.dtype, count=size)
-        t = self.__get_time_vector_in_seconds(start, size)
+        s = np.fromfile(self.__file, dtype=self.__samples_dtype, count=size)
 
-        return (t, s)
+        if include_time_vector:
+            t = self.__get_time_vector_in_seconds(start, size)
+            return (t, s)
+
+        return s
 
     def close(self):
         if not self.closed:
@@ -116,7 +124,11 @@ class GtrFile:
         return self.__samples_number_per_input
 
     @property
-    def dtype(self):
+    def inputs_number(self):
+        return self.__inputs_number
+
+    @property
+    def samples_dtype(self):
         return self.__samples_dtype
 
     #############################################
@@ -165,8 +177,10 @@ class GtrFile:
         self.__samples_dtype = np.dtype(obj)
 
     def __seek_sample(self, offset):
-        if offset < 0 or offset > self.__samples_number_per_input:
-            raise Exception("Wrong offset value")
+        if offset < 0:
+            raise ValueError("offset is less than 0")
+        if offset > self.__samples_number_per_input:
+            raise ValueError("offset is greater than the record length")
 
         self.__size_of_float = 4
         bin_offset = self.__bin_section_start + offset * \
