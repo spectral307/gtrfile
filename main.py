@@ -14,7 +14,7 @@ def main():
 
     print(gtr)
 
-    t, s = gtr.get_samples(2001, 1199)
+    s, t, n = gtr.get_items(2001, 1199)
 
     ax = plt.subplot()
     plt.plot(t, s[gtr.header["inputs"][0]["name"]],

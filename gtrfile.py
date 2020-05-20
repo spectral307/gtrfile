@@ -10,7 +10,10 @@ class GtrFile:
     __bin_section_end = None
     __bin_section_size = None
     __bin_section_start = None
-    __samples_dtype = None
+    __itemsize = None
+    __items_dtype = None
+    __items_number = None
+    __items_size_in_bytes = None
     __file = None
     __header = {
         "device": None,
@@ -23,8 +26,7 @@ class GtrFile:
     }
     __inputs_number = None
     __record_duration = None
-    __samples_number_per_input = None
-    __size_of_float = 4
+    __sample_size = 4
     __str_repr = None
 
     #############################################
@@ -42,42 +44,18 @@ class GtrFile:
 
         self.__inputs_number = len(self.__header["inputs"])
 
-        self.__size_of_float = 4
-        self.__samples_number_per_input = self.__bin_section_size \
-            // self.__inputs_number // self.__size_of_float
+        self.__items_number = int(
+            self.__bin_section_size / self.__inputs_number / self.__sample_size)
 
-        self.__infer_samples_dtype()
+        self.__itemsize = self.__sample_size * self.__inputs_number
+
+        self.__items_size_in_bytes = self.__items_number * self.__itemsize
+
+        self.__construct_items_dtype()
 
     def __str__(self):
         if self.__str_repr is None:
-            ind = "  "
-            inputs_str = "["
-            for i, inp in enumerate(self.__header["inputs"]):
-                inputs_str += f"{',' if i != 0 else ''}\n{ind}{ind}{ind}{{"
-                inputs_str += f"\n{ind}{ind}{ind}{ind}n: {inp['n']}"
-                inputs_str += f"\n{ind}{ind}{ind}{ind}name: {inp['name']},"
-                inputs_str += f"\n{ind}{ind}{ind}{ind}iepe: {inp['iepe']},"
-                inputs_str += f"\n{ind}{ind}{ind}{ind}coupling: {inp['coupling']},"
-                inputs_str += f"\n{ind}{ind}{ind}{ind}sensitivity: {inp['sensitivity']},"
-                inputs_str += f"\n{ind}{ind}{ind}{ind}unit: {inp['unit']},"
-                inputs_str += f"\n{ind}{ind}{ind}{ind}offset: {inp['offset']},"
-                inputs_str += f"\n{ind}{ind}{ind}}}"
-            inputs_str += f"\n{ind}{ind}]"
-            self.__str_repr = ("<GtrFile instance:"
-                               + f"\n{ind}samples number per input: {self.__samples_number_per_input},"
-                               + f"\n{ind}binary section start: {self.__bin_section_start},"
-                               + f"\n{ind}binary section end: {self.__bin_section_end},"
-                               + f"\n{ind}binary section size: {self.__bin_section_size},"
-                               + f"\n{ind}record duration: {self.__record_duration},"
-                               + f"\n{ind}inputs number: {self.__inputs_number},"
-                               + f"\n{ind}samples dtype: {self.__samples_dtype},"
-                               + f"\n{ind}header: {{"
-                               + f"\n{ind}{ind}encoding: {self.__header['encoding']},"
-                               + f"\n{ind}{ind}device: {self.__header['device']},"
-                               + f"\n{ind}{ind}rate: {self.__header['rate']},"
-                               + f"\n{ind}{ind}time: {self.__header['time']},"
-                               + f"\n{ind}{ind}inputs: {inputs_str}"
-                               + "\n>")
+            self.__construct_str_repr()
         return self.__str_repr
 
     def __del__(self):
@@ -87,8 +65,8 @@ class GtrFile:
     #############################################
     # Public Methods #
     #############################################
-    def get_samples(self, start: int, size: int, until_eof=False, include_time_vector=True):
-        self.__seek_sample(start)
+    def get_items(self, start: int, size: int, until_eof=False, include_time_vector=True, include_sample_numbers=True):
+        self.__seek_item(start)
 
         if until_eof:
             size = self.__get_remainder_size()
@@ -96,13 +74,18 @@ class GtrFile:
             if size > self.__get_remainder_size():
                 raise ValueError("size is greater than the remainder size")
 
-        s = np.fromfile(self.__file, dtype=self.__samples_dtype, count=size)
+        ret = [None] * 3
+
+        ret[0] = np.fromfile(
+            self.__file, dtype=self.__items_dtype, count=size)
 
         if include_time_vector:
-            t = self.__get_time_vector_in_seconds(start, size)
-            return (t, s)
+            ret[1] = self.__get_time_vector_in_seconds(start, size)
 
-        return s
+        if include_sample_numbers:
+            ret[2] = self.__get_sample_numbers(start, size)
+
+        return ret
 
     def close(self):
         if not self.closed:
@@ -120,16 +103,32 @@ class GtrFile:
         return self.__header
 
     @property
-    def samples_number_per_input(self):
-        return self.__samples_number_per_input
+    def items_number(self):
+        return self.__items_number
 
     @property
     def inputs_number(self):
         return self.__inputs_number
 
     @property
-    def samples_dtype(self):
-        return self.__samples_dtype
+    def items_dtype(self):
+        return self.__items_dtype
+
+    @property
+    def sample_size(self):
+        return self.__sample_size
+
+    @property
+    def itemsize(self):
+        return self.__itemsize
+
+    @property
+    def duration(self):
+        return self.__record_duration
+
+    @property
+    def rate(self):
+        return self.__header["rate"]
 
     #############################################
     # Private Methods #
@@ -170,21 +169,52 @@ class GtrFile:
                 "coupling": inp.attrib["coupling"]
             })
 
-    def __infer_samples_dtype(self):
+    def __construct_items_dtype(self):
         obj = []
         for i, inp in enumerate(self.__header["inputs"]):
             obj.append((f"{inp['name']}", np.float32))
-        self.__samples_dtype = np.dtype(obj)
+        self.__items_dtype = np.dtype(obj)
 
-    def __seek_sample(self, offset):
+    def __construct_str_repr(self):
+        ind = "  "
+        inputs_str = "["
+        for i, inp in enumerate(self.__header["inputs"]):
+            inputs_str += f"{',' if i != 0 else ''}\n{ind*3}{{"
+            inputs_str += f"\n{ind*4}n: {inp['n']},"
+            inputs_str += f"\n{ind*4}name: {inp['name']},"
+            inputs_str += f"\n{ind*4}iepe: {inp['iepe']},"
+            inputs_str += f"\n{ind*4}coupling: {inp['coupling']},"
+            inputs_str += f"\n{ind*4}sensitivity: {inp['sensitivity']},"
+            inputs_str += f"\n{ind*4}unit: {inp['unit']},"
+            inputs_str += f"\n{ind*4}offset: {inp['offset']}"
+            inputs_str += f"\n{ind*3}}}"
+        inputs_str += f"\n{ind*2}]"
+        self.__str_repr = ("<GtrFile instance:"
+                           + f"\n{ind}binary section start: {self.__bin_section_start},"
+                           + f"\n{ind}binary section end: {self.__bin_section_end},"
+                           + f"\n{ind}binary section size: {self.__bin_section_size},"
+                           + f"\n{ind}record duration: {self.__record_duration},"
+                           + f"\n{ind}item size: {self.__itemsize},"
+                           + f"\n{ind}items size in mbytes: {'{:.2f}'.format(self.__items_size_in_bytes/1024/1024)},"
+                           + f"\n{ind}items number per input: {self.__items_number},"
+                           + f"\n{ind}items dtype: {self.__items_dtype},"
+                           + f"\n{ind}inputs number: {self.__inputs_number},"
+                           + f"\n{ind}header: {{"
+                           + f"\n{ind*2}device: {self.__header['device']},"
+                           + f"\n{ind*2}rate: {self.__header['rate']},"
+                           + f"\n{ind*2}time: {self.__header['time']},"
+                           + f"\n{ind*2}encoding: {self.__header['encoding']},"
+                           + f"\n{ind*2}inputs: {inputs_str}"
+                           + f"\n{ind}}}"
+                           + "\n>")
+
+    def __seek_item(self, offset):
         if offset < 0:
             raise ValueError("offset is less than 0")
-        if offset > self.__samples_number_per_input:
+        if offset > self.__items_number:
             raise ValueError("offset is greater than the record length")
 
-        self.__size_of_float = 4
-        bin_offset = self.__bin_section_start + offset * \
-            self.__inputs_number * self.__size_of_float
+        bin_offset = self.__bin_section_start + offset * self.__itemsize
 
         if bin_offset == self.__file.tell():
             return
@@ -192,10 +222,12 @@ class GtrFile:
         self.__file.seek(bin_offset, 0)
 
     def __get_remainder_size(self):
-        self.__size_of_float = 4
         return ((self.__bin_section_end - self.__file.tell())
-                // self.__inputs_number // self.__size_of_float)
+                // self.__inputs_number // self.__sample_size)
 
     def __get_time_vector_in_seconds(self, start, size):
         sampling_interval = 1 / self.header["rate"]
         return sampling_interval * np.arange(start, start+size)
+
+    def __get_sample_numbers(self, start, size):
+        return np.arange(start, start+size)
