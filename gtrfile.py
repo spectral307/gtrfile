@@ -65,14 +65,14 @@ class GtrFile:
     #############################################
     # Public Methods #
     #############################################
-    def get_items(self, start: int, size: int, until_eof=False, include_time_vector=True, include_sample_numbers=True):
+    def get_items(self, start: int, size: int, until_eof=False, include_time_vector=True, include_item_numbers=True):
         self.__seek_item(start)
 
         if until_eof:
             size = self.__get_remainder_size()
         else:
             if size > self.__get_remainder_size():
-                raise ValueError("size is greater than the remainder size")
+                raise ValueError("'size' is greater than the remainder size")
 
         ret = [None] * 3
 
@@ -82,8 +82,8 @@ class GtrFile:
         if include_time_vector:
             ret[1] = self.__get_time_vector_in_seconds(start, size)
 
-        if include_sample_numbers:
-            ret[2] = self.__get_sample_numbers(start, size)
+        if include_item_numbers:
+            ret[2] = self.__get_item_numbers(start, size)
 
         return ret
 
@@ -210,9 +210,9 @@ class GtrFile:
 
     def __seek_item(self, offset):
         if offset < 0:
-            raise ValueError("offset is less than 0")
+            raise ValueError("'offset' is less than 0")
         if offset > self.__items_number:
-            raise ValueError("offset is greater than the record length")
+            raise ValueError("'offset' is greater than the recording size")
 
         bin_offset = self.__bin_section_start + offset * self.__itemsize
 
@@ -229,5 +229,5 @@ class GtrFile:
         sampling_interval = 1 / self.header["rate"]
         return sampling_interval * np.arange(start, start+size)
 
-    def __get_sample_numbers(self, start, size):
+    def __get_item_numbers(self, start, size):
         return np.arange(start, start+size)
