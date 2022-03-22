@@ -70,10 +70,10 @@ class GtrFile:
     def __del__(self):
         if self.__file is not None:
             self.__file.close()
+
     #############################################
     # Public Methods #
     #############################################
-
     def close(self):
         self.__file.close()
 
@@ -224,8 +224,10 @@ class GtrFile:
             line = self.__file.readline().decode(self.__header_encoding)
             self.__header_raw_text += line
 
+
 def main():
     print("=> gtrfile main")
+
 
 if __name__ == "__main__":
     main()
