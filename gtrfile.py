@@ -223,11 +223,3 @@ class GtrFile:
         while line != "</gtr_header>\n":
             line = self.__file.readline().decode(self.__header_encoding)
             self.__header_raw_text += line
-
-
-def main():
-    print("=> gtrfile main")
-
-
-if __name__ == "__main__":
-    main()
