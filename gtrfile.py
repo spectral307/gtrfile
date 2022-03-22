@@ -1,5 +1,6 @@
-from datetime import timedelta
 import numpy as np
+from os import SEEK_SET, SEEK_CUR, SEEK_END
+from rich import print as rich_print
 import xml.etree.ElementTree as ET
 
 
@@ -7,150 +8,193 @@ class GtrFile:
     #############################################
     # Member Variables #
     #############################################
-    __bin_section_end = None
-    __bin_section_size = None
-    __bin_section_start = None
-    __itemsize = None
-    __items_dtype = None
-    __items_number = None
-    __items_size_in_bytes = None
     __file = None
     __header = {
         "device": None,
-        "encoding": "cp1251",
-        "formatted_text": None,
         "inputs": [],
         "rate": None,
-        "text": None,
         "time": None
     }
+    __header_encoding = None
+    __header_raw_text = None
     __inputs_number = None
-    __record_duration = None
-    __sample_size = 4
-    __str_repr = None
+    __item_dtype = None
+    __item_size = None
+    __items_number = None
+    __items_section = {
+        "start": None,
+        "end": None,
+        "length": None
+    }
+    __sample_size = None
 
     #############################################
     # Magic Methods #
     #############################################
-    def __init__(self, path: str):
+    def __init__(self, path):
+        self.__header_encoding = "cp1251"
+        # sample - один отсчёт одного канала;
+        # размер sample в файле gtr - 4 байта (тип float32)
+        self.__sample_size = 4
+
         self.__file = open(path, "rb")
-        self.__file.seek(4, 0)
+        self.__file.seek(4, SEEK_SET)
 
-        self.__read_header()
-        self.__calculate_bin_section_parameters()
-        self.__parse_header()
+        self.__read_header_section()
 
-        self.__record_duration = timedelta(seconds=self.__header["time"])
+        # посчитать размер секции с отсчётами сигнала по количеству байт
+        self.__items_section["start"] = self.__file.tell()
+        self.__file.seek(0, SEEK_END)
+        self.__items_section["end"] = self.__file.tell()
+        self.__items_section["length"] = self.__items_section["end"] - \
+            self.__items_section["start"]
 
+        # вернуться в начало секции с отсчётами сигнала
+        self.__file.seek(self.__items_section["start"], SEEK_SET)
+
+        # количество записывающих каналов
         self.__inputs_number = len(self.__header["inputs"])
+        # item - один отсчёт со всех записывающих каналов
+        self.__item_size = self.__sample_size * self.__inputs_number
+        # число item-ов, посчитанное по количеству байт
+        items_number = self.__items_section["length"] / self.__item_size
 
-        self.__items_number = int(
-            self.__bin_section_size / self.__inputs_number / self.__sample_size)
+        # убедиться, что число item-ов - целое
+        if items_number.is_integer():
+            self.__items_number = int(items_number)
+        else:
+            raise BaseException("Items number is not integer")
 
-        self.__itemsize = self.__sample_size * self.__inputs_number
-
-        self.__items_size_in_bytes = self.__items_number * self.__itemsize
-
-        self.__construct_items_dtype()
-
-    def __str__(self):
-        if self.__str_repr is None:
-            self.__construct_str_repr()
-        return self.__str_repr
+        self.__construct_item_dtype()
 
     def __del__(self):
-        if not self.closed:
-            self.close()
-
+        if self.__file is not None:
+            self.__file.close()
     #############################################
     # Public Methods #
     #############################################
-    def get_items(self, start: int, size: int, until_eof=False, include_time_vector=True, include_item_numbers=True):
-        self.__seek_item(start)
 
+    def close(self):
+        self.__file.close()
+
+    def read_items(self, count, until_eof=False):
         if until_eof:
-            size = self.__get_remainder_size()
+            count = self.__get_remainder_length()
         else:
-            if size > self.__get_remainder_size():
-                raise ValueError("'size' is greater than the remainder size")
+            if count > self.__get_remainder_length():
+                raise ValueError(
+                    "\"count\" is greater than remainder length")
 
-        ret = [None] * 3
+        dtype = np.dtype([("s", self.__item_dtype), ("t", "f8"), ("n", "i4")])
+        ret = np.empty(count, dtype)
 
-        ret[0] = np.fromfile(
-            self.__file, dtype=self.__items_dtype, count=size)
-
-        if include_time_vector:
-            ret[1] = self.__get_time_vector_in_seconds(start, size)
-
-        if include_item_numbers:
-            ret[2] = self.__get_item_numbers(start, size)
+        start = self.current_item_index
+        ret["s"] = np.fromfile(
+            self.__file, dtype=self.__item_dtype, count=count)
+        ret["t"] = self.__get_time(start, count)
+        ret["n"] = self.__get_ordinals(start, count)
 
         return ret
 
-    def close(self):
-        if not self.closed:
-            self.__file.close()
+    def read_items_until_eof(self):
+        return self.read_items(0, True)
+
+    def seek_item(self, offset, whence=SEEK_SET):
+        if whence == SEEK_SET:
+            if offset < 0:
+                raise ValueError("\"offset\" is less than zero")
+            if offset > self.__items_number:
+                raise ValueError(
+                    "\"offset\" is greater than items number")
+            self.__file.seek(offset * self.__item_size + self.__items_section["start"],
+                             whence)
+        elif whence == SEEK_CUR:
+            if offset < 0:
+                raise ValueError("\"offset\" is less than zero")
+            if offset > self.__get_remainder_length():
+                raise ValueError(
+                    "\"offset\" is greater than remainder length")
+            self.__file.seek(offset * self.__item_size, whence)
+        elif whence == SEEK_END:
+            if offset > 0:
+                raise ValueError("\"offset\" is greater than zero")
+            if abs(offset) > self.__items_number:
+                raise ValueError(
+                    "\"offset\" absolute value is greater than items number")
+            self.__file.seek(offset * self.__item_size, whence)
+        else:
+            raise ValueError("\"whence\" is invalid")
+
+    def print_items_section_summary(self):
+        rich_print(self.__items_section)
+
+    def print_header(self):
+        rich_print(self.__header)
 
     #############################################
     # Properties #
     #############################################
     @property
+    def item_dtype(self):
+        return self.__item_dtype
+
+    @property
     def closed(self):
         return self.__file.closed
+
+    @property
+    def current_item_index(self):
+        current_position = self.__file.tell()
+        current_item_index = (
+            current_position - self.__items_section["start"]) / self.__item_size
+        if not current_item_index.is_integer():
+            raise BaseException("Current item index is not integer")
+        if current_item_index > self.__items_number:
+            raise BaseException(
+                "Current item index is greater than items number")
+        return int(current_item_index)
 
     @property
     def header(self):
         return self.__header
 
     @property
-    def items_number(self):
-        return self.__items_number
-
-    @property
     def inputs_number(self):
         return self.__inputs_number
 
     @property
-    def items_dtype(self):
-        return self.__items_dtype
+    def items_number(self):
+        return self.__items_number
 
     @property
-    def sample_size(self):
-        return self.__sample_size
+    def items_section(self):
+        return self.__items_section
 
     @property
-    def itemsize(self):
-        return self.__itemsize
-
-    @property
-    def duration(self):
-        return self.__record_duration
-
-    @property
-    def rate(self):
-        return self.__header["rate"]
+    def remainder_length(self):
+        return self.__get_remainder_length()
 
     #############################################
     # Private Methods #
     #############################################
-    def __calculate_bin_section_parameters(self):
-        self.__bin_section_start = self.__file.tell()
-        self.__file.seek(0, 2)
-        self.__bin_section_end = self.__file.tell()
-        self.__bin_section_size = self.__bin_section_end - self.__bin_section_start
-        self.__file.seek(self.__bin_section_start, 0)
+    def __construct_item_dtype(self):
+        obj = []
+        for i, inp in enumerate(self.__header["inputs"]):
+            obj.append((f"{inp['name']}", np.float32))
+        self.__item_dtype = np.dtype(obj)
 
-    def __read_header(self):
-        line = self.__file.readline().decode(self.__header["encoding"])
-        self.__header["text"] = line.rstrip()
-        self.__header["formatted_text"] = line
-        while line != "</gtr_header>\n":
-            line = self.__file.readline().decode(self.__header["encoding"])
-            self.__header["text"] += line.rstrip()
-            self.__header["formatted_text"] += line
+    def __get_remainder_length(self):
+        return self.__items_number - self.current_item_index
 
-    def __parse_header(self):
-        tree = ET.ElementTree(ET.fromstring(self.__header["text"]))
+    def __get_ordinals(self, start, count):
+        return np.arange(start, start + count)
+
+    def __get_time(self, start, count):
+        ts = 1 / self.__header["rate"]
+        return ts * np.arange(start, start + count)
+
+    def __parse_header_text(self):
+        tree = ET.ElementTree(ET.fromstring(self.__header_raw_text))
         root = tree.getroot()
         self.__header["time"] = int(root.attrib["time"])
         self.__header["rate"] = int(root.attrib["rate"])
@@ -169,65 +213,19 @@ class GtrFile:
                 "coupling": inp.attrib["coupling"]
             })
 
-    def __construct_items_dtype(self):
-        obj = []
-        for i, inp in enumerate(self.__header["inputs"]):
-            obj.append((f"{inp['name']}", np.float32))
-        self.__items_dtype = np.dtype(obj)
+    def __read_header_section(self):
+        self.__read_header_section_as_text()
+        self.__parse_header_text()
 
-    def __construct_str_repr(self):
-        ind = "  "
-        inputs_str = "["
-        for i, inp in enumerate(self.__header["inputs"]):
-            inputs_str += f"{',' if i != 0 else ''}\n{ind*3}{{"
-            inputs_str += f"\n{ind*4}n: {inp['n']},"
-            inputs_str += f"\n{ind*4}name: {inp['name']},"
-            inputs_str += f"\n{ind*4}iepe: {inp['iepe']},"
-            inputs_str += f"\n{ind*4}coupling: {inp['coupling']},"
-            inputs_str += f"\n{ind*4}sensitivity: {inp['sensitivity']},"
-            inputs_str += f"\n{ind*4}unit: {inp['unit']},"
-            inputs_str += f"\n{ind*4}offset: {inp['offset']}"
-            inputs_str += f"\n{ind*3}}}"
-        inputs_str += f"\n{ind*2}]"
-        self.__str_repr = ("<GtrFile instance:"
-                           + f"\n{ind}binary section start: {self.__bin_section_start},"
-                           + f"\n{ind}binary section end: {self.__bin_section_end},"
-                           + f"\n{ind}binary section size: {self.__bin_section_size},"
-                           + f"\n{ind}record duration: {self.__record_duration},"
-                           + f"\n{ind}item size: {self.__itemsize},"
-                           + f"\n{ind}items size in mbytes: {'{:.2f}'.format(self.__items_size_in_bytes/1024/1024)},"
-                           + f"\n{ind}items number per input: {self.__items_number},"
-                           + f"\n{ind}items dtype: {self.__items_dtype},"
-                           + f"\n{ind}inputs number: {self.__inputs_number},"
-                           + f"\n{ind}header: {{"
-                           + f"\n{ind*2}device: {self.__header['device']},"
-                           + f"\n{ind*2}rate: {self.__header['rate']},"
-                           + f"\n{ind*2}time: {self.__header['time']},"
-                           + f"\n{ind*2}encoding: {self.__header['encoding']},"
-                           + f"\n{ind*2}inputs: {inputs_str}"
-                           + f"\n{ind}}}"
-                           + "\n>")
+    def __read_header_section_as_text(self):
+        line = self.__file.readline().decode(self.__header_encoding)
+        self.__header_raw_text = line
+        while line != "</gtr_header>\n":
+            line = self.__file.readline().decode(self.__header_encoding)
+            self.__header_raw_text += line
 
-    def __seek_item(self, offset):
-        if offset < 0:
-            raise ValueError("'offset' is less than 0")
-        if offset > self.__items_number:
-            raise ValueError("'offset' is greater than the recording size")
+def main():
+    print("=> gtrfile main")
 
-        bin_offset = self.__bin_section_start + offset * self.__itemsize
-
-        if bin_offset == self.__file.tell():
-            return
-
-        self.__file.seek(bin_offset, 0)
-
-    def __get_remainder_size(self):
-        return ((self.__bin_section_end - self.__file.tell())
-                // self.__inputs_number // self.__sample_size)
-
-    def __get_time_vector_in_seconds(self, start, size):
-        sampling_interval = 1 / self.header["rate"]
-        return sampling_interval * np.arange(start, start+size)
-
-    def __get_item_numbers(self, start, size):
-        return np.arange(start, start+size)
+if __name__ == "__main__":
+    main()

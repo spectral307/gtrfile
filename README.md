@@ -1,4 +1,3 @@
-# gtrfile
-Класс GtrFile читает сигналы и извлекает другую информацию из файлов формата gtr, в которые программа GTLAB пишет сигналы.
+Класс GtrFile читает файлы gtr, создаваемые программой GTLab GTL.
 
-The GtrFile class reads signals and extracts other information out of gtr files into which the GTLAB application writes signals.
+The GtrFile class reads gtr files created by the GTLab GTL program.
