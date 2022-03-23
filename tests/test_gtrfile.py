@@ -2,12 +2,15 @@ from gtrfile import GtrFile
 import numpy as np
 from os import SEEK_SET, SEEK_CUR, SEEK_END
 import unittest
+import importlib.resources
 
 
 class TestGtrFile(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.__gtrfile = GtrFile("test_record.gtr")
+        with importlib.resources.path(__package__, "test_record.gtr") as p:
+            path = p
+        cls.__gtrfile = GtrFile(path)
         cls.__target_dtype = np.dtype(
             [("вход 1", np.float32), ("вход 3", np.float32)])
 
@@ -163,7 +166,3 @@ class TestGtrFile(unittest.TestCase):
                              (1.564111709594726562e+00, 4.470252990722656250e-01),
                              (1.570063829421997070e+00, 4.486751556396484375e-01)], dtype=dt)
         self.assertTrue(np.all(items["s"] == target_s))
-
-
-if __name__ == "__main__":
-    unittest.main()

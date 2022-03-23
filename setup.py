@@ -6,5 +6,4 @@ with open("requirements.txt") as f:
 setup(name="gtrfile",
       version="1.0.0",
       py_modules=["gtrfile"],
-      install_requires=requirements,
-      test_suite="test_gtrfile")
+      install_requires=requirements)
