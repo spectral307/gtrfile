@@ -6,29 +6,6 @@ import xml.etree.ElementTree as ET
 
 class GtrFile:
     #############################################
-    # Member Variables #
-    #############################################
-    __file = None
-    __header = {
-        "device": None,
-        "inputs": [],
-        "rate": None,
-        "time": None
-    }
-    __header_encoding = None
-    __header_raw_text = None
-    __inputs_number = None
-    __item_dtype = None
-    __item_size = None
-    __items_number = None
-    __items_section = {
-        "start": None,
-        "end": None,
-        "length": None
-    }
-    __sample_size = None
-
-    #############################################
     # Magic Methods #
     #############################################
     def __init__(self, path):
@@ -36,6 +13,18 @@ class GtrFile:
         # sample - один отсчёт одного канала;
         # размер sample в файле gtr - 4 байта (тип float32)
         self.__sample_size = 4
+
+        self.__header = {
+            "device": None,
+            "inputs": [],
+            "rate": None,
+            "time": None
+        }
+        self.__items_section = {
+            "start": None,
+            "end": None,
+            "length": None
+        }
 
         self.__file = open(path, "rb")
         self.__file.seek(4, SEEK_SET)
